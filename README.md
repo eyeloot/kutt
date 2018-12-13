@@ -19,6 +19,7 @@
 * [Setup](#setup)
 * [API](#api)
 * [Integrate with ShareX](#sharex)
+* [3rd Party API Packages](#3rd-party-api-packages)
 * [Contributing](#contributing)
 
 ## Key Features
@@ -42,7 +43,7 @@
 * Neo4j (Graph database)
 
 ## Setup
-You need to have [Node.js](https://nodejs.org/) and [Neo4j](https://neo4j.com/) installed on your machine.
+You need to have [Node.js](https://nodejs.org/), [Neo4j](https://neo4j.com/) and [Redis](https://redis.io/) installed on your machine.
 
 1. Clone this repository or [download zip](https://github.com/thedevs-network/kutt/archive/develop.zip).
 2. Copy `config.example.js` to `config.js` in both server and client folders and fill them properly.
@@ -111,6 +112,14 @@ Body (or query for GET request)
   
 ## ShareX
 You can use Kutt as your default URL shortener in [ShareX](https://getsharex.com/). Please refer to our [ShareX wiki](https://github.com/thedevs-network/kutt/wiki/ShareX) for more informations.
+
+## 3rd Party API packages
+| Language  | Link                                                       | Description                                       |
+|-----------|------------------------------------------------------------|---------------------------------------------------|
+| C# (.NET) | [KuttSharp](https://github.com/0xaryan/KuttSharp)          | .NET package for Kutt.it url shortener            |
+| Python    | [kutt-cli](https://github.com/univa64/kutt-cli)            | Command-line client for Kutt written in Python    |
+| Ruby      | [kutt.rb](https://github.com/univa64/kutt.rb)              | Kutt library written in Ruby                      |
+| Node.js   | [node-kutt](https://github.com/ardalanamini/node-kutt)     | Node.js client for Kutt.it url shortener          |
 
 ## Contributing
 Pull requests are welcome. You'll probably find lots of improvements to be made.

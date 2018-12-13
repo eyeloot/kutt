@@ -1,5 +1,7 @@
 const urlRegex = require('url-regex');
 const URL = require('url');
+const dns = require('dns');
+const { promisify } = require('util');
 const generate = require('nanoid/generate');
 const useragent = require('useragent');
 const geoip = require('geoip-lite');
@@ -17,10 +19,15 @@ const {
   getUrls,
   setCustomDomain,
   urlCountFromDate,
+  banUrl,
+  getBannedDomain,
+  getBannedHost,
 } = require('../db/url');
-
+const redis = require('../redis');
 const { addProtocol, generateShortUrl } = require('../utils');
 const config = require('../config');
+
+const dnsLookup = promisify(dns.lookup);
 
 const generateId = async () => {
   const id = generate('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890', 6);
@@ -72,6 +79,22 @@ exports.urlShortener = async ({ body, user }, res) => {
     }
   }
 
+  // If domain or host is banned
+  const domain = URL.parse(body.target).hostname;
+  const isDomainBanned = await getBannedDomain(domain);
+
+  let isHostBanned;
+  try {
+    const dnsRes = await dnsLookup(domain);
+    isHostBanned = await getBannedHost(dnsRes && dnsRes.address);
+  } catch (error) {
+    isHostBanned = null;
+  }
+
+  if (isDomainBanned || isHostBanned) {
+    return res.status(400).json({ error: 'URL is containing malware/scam.' });
+  }
+
   // Create new URL
   const id = (user && body.customurl) || (await generateId());
   const target = addProtocol(body.target);
@@ -99,17 +122,36 @@ exports.goToUrl = async (req, res, next) => {
   const referrer = req.header('Referer') && URL.parse(req.header('Referer')).hostname;
   const location = geoip.lookup(req.realIp);
   const country = location && location.country;
-  const urls = await findUrl({ id, domain });
   const isBot =
     botList.some(bot => agent.source.toLowerCase().includes(bot)) || agent.family === 'Other';
-  if (!urls && !urls.length) return next();
-  const url = urls.find(item => (domain ? item.domain === domain : !item.domain));
+
+  let url;
+
+  const cachedUrl = await redis.get(id + domain || '');
+
+  if (cachedUrl) {
+    url = JSON.parse(cachedUrl);
+  } else {
+    const urls = await findUrl({ id, domain });
+    if (!urls && !urls.length) return next();
+    url = urls.find(item => (domain ? item.domain === domain : !item.domain));
+  }
+
+  if (!url) return next();
+
+  redis.set(id + domain || '', JSON.stringify(url), 'EX', 60 * 60 * 1);
+
+  if (url.banned) {
+    return res.redirect('/banned');
+  }
+
   const doesRequestInfo = /.*\+$/gi.test(reqestedId);
   if (doesRequestInfo && !url.password) {
     req.urlTarget = url.target;
     req.pageType = 'info';
     return next();
   }
+
   if (url.password && !req.body.password) {
     req.protectedUrl = id;
     req.pageType = 'password';
@@ -121,7 +163,7 @@ exports.goToUrl = async (req, res, next) => {
       return res.status(401).json({ error: 'Password is not correct' });
     }
     if (url.user && !isBot) {
-      await createVisit({
+      createVisit({
         browser,
         country: country || 'Unknown',
         domain,
@@ -133,7 +175,7 @@ exports.goToUrl = async (req, res, next) => {
     return res.status(200).json({ target: url.target });
   }
   if (url.user && !isBot) {
-    await createVisit({
+    createVisit({
       browser,
       country: country || 'Unknown',
       domain,
@@ -182,6 +224,7 @@ exports.deleteUrl = async ({ body: { id, domain }, user }, res) => {
   const customDomain = domain !== config.DEFAULT_DOMAIN && domain;
   const urls = await findUrl({ id, domain: customDomain });
   if (!urls && !urls.length) return res.status(400).json({ error: "Couldn't find the short URL." });
+  redis.del(id + customDomain || '');
   const response = await deleteUrl({ id, domain: customDomain, user });
   if (response) return res.status(200).json({ message: 'Sort URL deleted successfully' });
   return res.status(400).json({ error: "Couldn't delete short URL." });
@@ -193,4 +236,38 @@ exports.getStats = async ({ query: { id, domain }, user }, res) => {
   const stats = await getStats({ id, domain: customDomain, user });
   if (!stats) return res.status(400).json({ error: 'Could not get the short URL stats.' });
   return res.status(200).json(stats);
+};
+
+exports.ban = async ({ body }, res) => {
+  if (!body.id) return res.status(400).json({ error: 'No id has been provided.' });
+
+  const urls = await findUrl({ id: body.id });
+  const [url] = urls.filter(item => !item.domain);
+
+  if (!url) return res.status(400).json({ error: "Couldn't find the URL." });
+
+  if (url.banned) return res.status(200).json({ message: 'URL was banned already' });
+
+  redis.del(body.id);
+
+  const domain = URL.parse(url.target).hostname;
+
+  let host;
+  if (body.host) {
+    try {
+      const dnsRes = await dnsLookup(domain);
+      host = dnsRes && dnsRes.address;
+    } catch (error) {
+      host = null;
+    }
+  }
+
+  await banUrl({
+    domain: body.domain && domain,
+    host,
+    id: body.id,
+    user: body.user,
+  });
+
+  return res.status(200).json({ message: 'URL has been banned successfully' });
 };

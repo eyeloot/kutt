@@ -52,7 +52,7 @@ exports.createShortUrl = params =>
           ...data,
           password: !!data.password,
           reuse: !!params.reuse,
-          shortUrl: generateShortUrl(data.id, params.user.domain),
+          shortUrl: generateShortUrl(data.id, params.user && params.user.domain),
         });
       })
       .catch(err => session.close() || reject(err));
@@ -434,3 +434,50 @@ exports.urlCountFromDate = ({ date, email }) =>
       })
       .catch(err => reject(err));
   });
+
+exports.banUrl = async ({ id, domain, host, user }) => {
+  const session = driver.session();
+  const userQuery = user
+    ? 'OPTIONAL MATCH (u:USER)-[:CREATED]->(l) SET u.banned = true WITH u ' +
+      'OPTIONAL MATCH (u)-[:CREATED]->(ls:URL) SET ls.banned = true'
+    : '';
+  const domainQuery = domain
+    ? 'MERGE (d:DOMAIN { name: $domain }) ON CREATE SET d.banned = true'
+    : '';
+  const hostQuery = host ? 'MERGE (h:HOST { name: $host }) ON CREATE SET h.banned = true' : '';
+  const withL = user || domain || host ? 'WITH l' : '';
+  await session.writeTransaction(tx =>
+    tx.run(
+      'MATCH (l:URL { id: $id }) WHERE NOT (l)-[:USES]->(:DOMAIN) ' +
+        `SET l.banned = true ${withL} ${userQuery} ${domainQuery} ${hostQuery}`,
+      {
+        id,
+        domain,
+        host,
+      }
+    )
+  );
+  session.close();
+};
+
+exports.getBannedDomain = async (domain = '') => {
+  const session = driver.session();
+  const { records } = await session.readTransaction(tx =>
+    tx.run('MATCH (d:DOMAIN { name: $domain, banned: true }) RETURN d', {
+      domain,
+    })
+  );
+  session.close();
+  return records.length > 0;
+};
+
+exports.getBannedHost = async (host = '') => {
+  const session = driver.session();
+  const { records } = await session.readTransaction(tx =>
+    tx.run('MATCH (h:HOST { name: $host, banned: true }) RETURN h', {
+      host,
+    })
+  );
+  session.close();
+  return records.length > 0;
+};
